@@ -134,9 +134,11 @@ class BTagValidation : public edm::EDAnalyzer {
 
     TH1D *h1_nFatJet;
     TH1D *h1_fatjet_pt;
-
+    TH1D *h1_fatjet_pt_doubleb_fail;
     TH1D *h1_nSubJet;
     TH1D *h1_subjet_pt;
+
+    TH2D *h2_jp_doubleb;
 
     TProfile *p1_SubJetPt_TotalTracks;
     TProfile *p1_SubJetPt_SharedTracks;
@@ -482,7 +484,7 @@ void BTagValidation::beginJob() {
 
   h1_nFatJet        = fs->make<TH1D>("h1_nFatJet",       ";N(AK8 jets);;",     100,0,100);
   h1_fatjet_pt      = fs->make<TH1D>("h1_fatjet_pt",     ";p_{T} (AK8 jets) [GeV];;",   PtMax/10,0,PtMax);
-
+  h1_fatjet_pt_doubleb_fail = fs->make<TH1D>("h1_fatjet_pt_doubleb_fail",     ";p_{T} (AK8 jets) [GeV];;",   PtMax/10,0,PtMax);
   if( usePrunedSubjets_ ) {
     h1_nSubJet        = fs->make<TH1D>("h1_nPrunedSubJet",       ";N(pruned subjets);;",     100,0,100);
     h1_subjet_pt      = fs->make<TH1D>("h1_PrunedSubjet_pt",     ";p_{T} (pruned subjets) [GeV]",   PtMax/10,0,PtMax);
@@ -794,6 +796,7 @@ void BTagValidation::createJetHistos(const TString& histoTag) {
   AddHisto(histoTag+"_CSV"     ,";CSV;;",50,0.,1.);
   AddHisto(histoTag+"_CSVIVFv2",";CSVIVFv2;;",50,0.,1.);
   AddHisto(histoTag+"_DoubleB" ,";DoubleB;;",100,-1,1.);
+  AddHisto2D(histoTag+"_JP_DoubleB",";JP;Double B;",50,0.,2.5,20,-1,1.);
 
   AddHisto(histoTag+"_TCHE_extended1",";TCHE_extended1;;",70,-30.,30.); 
   AddHisto(histoTag+"_TCHP_extended1",";TCHP_extended1;;",70,-30.,30.); 
@@ -1005,7 +1008,31 @@ void BTagValidation::analyze(const edm::Event& iEvent, const edm::EventSetup& iS
         else if( !fatJetDoubleBTagging_ && FatJetInfo.Jet_CombIVF[iJet]<=fatJetBDiscrCut_ ) continue;
       }
 
-      if (fatJetDoubleSVBTagging_ && FatJetInfo.Jet_DoubleSV[iJet] <= fatJetDoubleSVBDiscrCut_) continue ;  
+      if (fatJetDoubleSVBTagging_ && FatJetInfo.Jet_DoubleSV[iJet] <= fatJetDoubleSVBDiscrCut_) {
+
+        //// apply b-tagging scale factors
+        double wtFatJetFail = 1.;
+        if( applySFs_ && !isData ) {
+          if( applyFatJetBTagging_ && fatJetDoubleBTagging_ ) {
+            //wtFatJet *= ( scaleFactor(SubJets.Jet_flavour[iSubJet1], SubJets.Jet_pt[iSubJet1], SubJets.Jet_eta[iSubJet1], (subJetBDiscrCut_>0.25)) *
+            //    scaleFactor(SubJets.Jet_flavour[iSubJet2], SubJets.Jet_pt[iSubJet2], SubJets.Jet_eta[iSubJet2], (subJetBDiscrCut_>0.25)) );
+            wtFatJetFail *= reader.eval(BTagEntry::JetFlavor(SubJets.Jet_flavour[iSubJet1]), SubJets.Jet_eta[iSubJet1], SubJets.Jet_pt[iSubJet1]); 
+            wtFatJetFail *= reader.eval(BTagEntry::JetFlavor(SubJets.Jet_flavour[iSubJet2]), SubJets.Jet_eta[iSubJet2], SubJets.Jet_pt[iSubJet2]); 
+          }
+          else if( applyFatJetBTagging_ && !fatJetDoubleBTagging_ )
+            //wtFatJet *= scaleFactor(FatJetInfo.Jet_flavour[iJet], FatJetInfo.Jet_pt[iJet], FatJetInfo.Jet_eta[iJet], (fatJetBDiscrCut_>0.25));
+            wtFatJetFail *= reader.eval(BTagEntry::JetFlavor(FatJetInfo.Jet_flavour[iJet]), FatJetInfo.Jet_eta[iJet], FatJetInfo.Jet_pt[iJet]); 
+        }
+        //added by Erich - jetPt reweighting factor
+        double wtJetPtFail = 1.;
+        if (doJetPtReweighting_ && !isData) {
+          wtJetPtFail *= GetLumiWeightsJetPtBased(file_JetPtWt_, hist_JetPtWt_, FatJetInfo.Jet_pt[iJet]) ;
+          wtFatJetFail *= wtJetPtFail ;
+        }
+
+        h1_fatjet_pt_doubleb_fail->Fill(FatJetInfo.Jet_pt[iJet],wtPU*wtFatJetFail);
+        continue ;  
+      }
 
       //// apply b-tagging scale factors
       double wtFatJet = 1.;
@@ -1688,7 +1715,8 @@ void BTagValidation::analyze(const edm::Event& iEvent, const edm::EventSetup& iS
     FillHisto(histoTag+"_DoubleB",  flav, isGSPbb, isGSPcc ,doubleb   ,wt);
     FillHisto(histoTag+"_TagVarCSV_sv_mass", flav, isGSPbb ,isGSPcc ,mass_TagVarCSV_sv,   wt);
     FillHisto2D(histoTag+"_TagVarCSV_sv_mass_vs_jetpt"        ,flav,isGSPbb , isGSPcc, ptjet,mass_TagVarCSV_sv,wt);
-
+    FillHisto2D(histoTag+"_JP_DoubleB", flav, isGSPbb, isGSPcc, jetproba, doubleb, wt);
+   
     FillHisto(histoTag+"_TCHE_extended1",  flav, isGSPbb, isGSPcc ,tche  , wt);
     FillHisto(histoTag+"_TCHP_extended1",  flav, isGSPbb, isGSPcc ,tchp  , wt);
     FillHisto(histoTag+"_TCHE_extended2",  flav, isGSPbb, isGSPcc ,tche  , wt);
